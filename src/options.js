@@ -8,7 +8,8 @@ async function saveOptions() {
       apiKey: document.getElementById('apiKey').value,
       llmModel: document.getElementById('llmModel').value,
       customEndpoint: document.getElementById('customEndpoint').value,
-      customPrompts: getCustomPrompts()
+      customPrompts: getCustomPrompts(),
+      showSuccessNotification: document.getElementById('showSuccessNotification').checked
     };
 
     await new Promise((resolve, reject) => {
@@ -38,15 +39,66 @@ async function saveOptions() {
 function getCustomPrompts() {
   try {
     const promptContainers = document.querySelectorAll('.prompt-container');
-    return Array.from(promptContainers).map(container => ({
-      id: snakeCase(container.querySelector('.prompt-title').value || ''),
-      title: container.querySelector('.prompt-title').value || '',
-      prompt: container.querySelector('.prompt-text').value || ''
-    })).filter(prompt => prompt.title && prompt.prompt); // Filter out empty prompts
+    return Array.from(promptContainers).map(container => {
+      const shortcutData = container.dataset.shortcut;
+      return {
+        id: snakeCase(container.querySelector('.prompt-title').value || ''),
+        title: container.querySelector('.prompt-title').value || '',
+        prompt: container.querySelector('.prompt-text').value || '',
+        shortcut: shortcutData ? JSON.parse(shortcutData) : null
+      };
+    }).filter(prompt => prompt.title && prompt.prompt);
   } catch (error) {
     console.error('Error getting custom prompts:', error);
     return [];
   }
+}
+
+function formatShortcut(shortcut) {
+  if (!shortcut) return '';
+  const parts = [];
+  if (shortcut.ctrlKey) parts.push('Ctrl');
+  if (shortcut.altKey) parts.push('Alt');
+  if (shortcut.shiftKey) parts.push('Shift');
+  if (shortcut.metaKey) parts.push('Meta');
+  // Display the key nicely
+  let key = shortcut.key;
+  if (key === ' ') key = 'Space';
+  else if (key.length === 1) key = key.toUpperCase();
+  parts.push(key);
+  return parts.join('+');
+}
+
+function recordShortcut(container) {
+  const display = container.querySelector('.shortcut-display');
+  const recordBtn = container.querySelector('.record-shortcut');
+  display.value = 'Press a key combo...';
+  display.style.borderColor = '#6366f1';
+  recordBtn.textContent = 'Recording...';
+  recordBtn.classList.replace('bg-indigo-600', 'bg-yellow-500');
+
+  function onKeyDown(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    // Ignore modifier-only presses
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
+
+    const shortcut = {
+      ctrlKey: e.ctrlKey,
+      altKey: e.altKey,
+      shiftKey: e.shiftKey,
+      metaKey: e.metaKey,
+      key: e.key
+    };
+    container.dataset.shortcut = JSON.stringify(shortcut);
+    display.value = formatShortcut(shortcut);
+    display.style.borderColor = '';
+    recordBtn.textContent = 'Record';
+    recordBtn.classList.replace('bg-yellow-500', 'bg-indigo-600');
+    document.removeEventListener('keydown', onKeyDown, true);
+  }
+
+  document.addEventListener('keydown', onKeyDown, true);
 }
 
 function snakeCase(str) {
@@ -60,7 +112,8 @@ async function restoreOptions() {
       apiKey: '',
       llmModel: 'gpt-3.5-turbo',
       customEndpoint: '',
-      customPrompts: []
+      customPrompts: [],
+      showSuccessNotification: true
     };
 
     const items = await new Promise(resolve => {
@@ -78,6 +131,12 @@ async function restoreOptions() {
       }
     });
 
+    // Restore notification setting
+    const notifCheckbox = document.getElementById('showSuccessNotification');
+    if (notifCheckbox) {
+      notifCheckbox.checked = items.showSuccessNotification !== false;
+    }
+
     // Clear existing prompts before restoring
     const promptsContainer = document.getElementById('prompts-container');
     while (promptsContainer.firstChild) {
@@ -86,7 +145,7 @@ async function restoreOptions() {
 
     // Restore custom prompts
     items.customPrompts.forEach(prompt => {
-      addPromptToUI(prompt.title, prompt.prompt, prompt.id);
+      addPromptToUI(prompt.title, prompt.prompt, prompt.id, prompt.shortcut);
     });
 
     updateUIForProvider(items.llmProvider);
@@ -297,11 +356,11 @@ async function fetchAvailableModels() {
   }
 }
 
-function addPromptToUI(title = '', prompt = '', id = '') {
+function addPromptToUI(title = '', prompt = '', id = '', shortcut = null) {
   try {
     const promptsContainer = document.getElementById('prompts-container');
     const template = document.getElementById('prompt-template');
-    
+
     if (!promptsContainer || !template) {
       throw new Error('Required elements not found');
     }
@@ -310,7 +369,7 @@ function addPromptToUI(title = '', prompt = '', id = '') {
 
     const titleInput = promptElement.querySelector('.prompt-title');
     const textInput = promptElement.querySelector('.prompt-text');
-    
+
     if (titleInput && textInput) {
       titleInput.value = title;
       textInput.value = prompt;
@@ -321,11 +380,32 @@ function addPromptToUI(title = '', prompt = '', id = '') {
     idInput.type = 'hidden';
     idInput.className = 'prompt-id';
     idInput.value = id || snakeCase(title);
-    
+
     const container = promptElement.querySelector('.prompt-container');
     if (container) {
       container.appendChild(idInput);
-      
+
+      // Set up shortcut
+      if (shortcut) {
+        container.dataset.shortcut = JSON.stringify(shortcut);
+        const shortcutDisplay = container.querySelector('.shortcut-display');
+        if (shortcutDisplay) shortcutDisplay.value = formatShortcut(shortcut);
+      }
+
+      const recordBtn = container.querySelector('.record-shortcut');
+      if (recordBtn) {
+        recordBtn.addEventListener('click', () => recordShortcut(container));
+      }
+
+      const clearBtn = container.querySelector('.clear-shortcut');
+      if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+          delete container.dataset.shortcut;
+          const display = container.querySelector('.shortcut-display');
+          if (display) display.value = '';
+        });
+      }
+
       const deleteButton = container.querySelector('.delete-prompt');
       if (deleteButton) {
         deleteButton.addEventListener('click', function() {

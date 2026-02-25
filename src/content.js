@@ -1,19 +1,83 @@
 const browserAPI = (typeof browser !== 'undefined' ? browser : chrome);
 
+// Cached settings
+let cachedShortcuts = [];
+let cachedShowSuccessNotification = true;
+
+// Load settings from storage
+function loadSettings() {
+  browserAPI.storage.sync.get({ customPrompts: [], showSuccessNotification: true }, (items) => {
+    cachedShortcuts = (items.customPrompts || []).filter(p => p.shortcut);
+    cachedShowSuccessNotification = items.showSuccessNotification !== false;
+  });
+}
+loadSettings();
+
+// Update cache when settings change
+browserAPI.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync') {
+    if (changes.customPrompts) {
+      cachedShortcuts = (changes.customPrompts.newValue || []).filter(p => p.shortcut);
+    }
+    if (changes.showSuccessNotification) {
+      cachedShowSuccessNotification = changes.showSuccessNotification.newValue !== false;
+    }
+  }
+});
+
+// Keyboard shortcut listener
+document.addEventListener('keydown', (e) => {
+  // Ignore modifier-only presses
+  if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
+
+  for (const prompt of cachedShortcuts) {
+    const s = prompt.shortcut;
+    if (
+      s.key === e.key &&
+      s.ctrlKey === e.ctrlKey &&
+      s.altKey === e.altKey &&
+      s.shiftKey === e.shiftKey &&
+      s.metaKey === e.metaKey
+    ) {
+      const selectedText = window.getSelection().toString().trim();
+      if (!selectedText) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      enhanceSelectedText(prompt.id, selectedText)
+        .then(enhancedText => {
+          replaceSelectedText(enhancedText);
+          if (cachedShowSuccessNotification) {
+            showSuccessNotification('Text enhanced successfully');
+          }
+        })
+        .catch(error => {
+          console.error('Error enhancing text via shortcut:', error);
+          showErrorNotification(error.message);
+        });
+      return;
+    }
+  }
+}, true);
+
 // Listen for messages from the background script
 browserAPI.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log('[SCRAMBLE] Received message:', request);
-  
+
   // Add support for ping message
   if (request.action === 'ping') {
     sendResponse({ success: true });
     return;
   }
-  
+
   if (request.action === 'enhanceText') {
     enhanceSelectedText(request.promptId, request.selectedText)
       .then(enhancedText => {
         replaceSelectedText(enhancedText);
+        if (cachedShowSuccessNotification) {
+          showSuccessNotification('Text enhanced successfully');
+        }
         sendResponse({ success: true });
       })
       .catch(error => {
@@ -60,11 +124,11 @@ function replaceSelectedText(enhancedText) {
       const end = activeElement.selectionEnd;
       const text = activeElement.value;
       activeElement.value = text.substring(0, start) + enhancedText + text.substring(end);
-      
+
       // Trigger input event for compatibility with reactive frameworks
       const inputEvent = new Event('input', { bubbles: true });
       activeElement.dispatchEvent(inputEvent);
-      
+
       // Trigger change event
       const changeEvent = new Event('change', { bubbles: true });
       activeElement.dispatchEvent(changeEvent);
@@ -75,6 +139,27 @@ function replaceSelectedText(enhancedText) {
 
     selection.removeAllRanges();
   }
+}
+
+// Function to show success notification
+function showSuccessNotification(message) {
+  const notification = document.createElement('div');
+  notification.textContent = message;
+  notification.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background-color: #22c55e;
+    color: white;
+    padding: 10px;
+    border-radius: 5px;
+    z-index: 9999;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+  `;
+  document.body.appendChild(notification);
+  setTimeout(() => {
+    notification.remove();
+  }, 3000);
 }
 
 // Function to show error notification
