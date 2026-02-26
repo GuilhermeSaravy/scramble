@@ -4,41 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scramble</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            width: 300px;
-            padding: 15px;
-        }
-        h1 {
-            font-size: 18px;
-            color: #333;
-            margin-bottom: 15px;
-        }
-        #status {
-            margin-bottom: 15px;
-            padding: 10px;
-            background-color: #f1f1f1;
-            border-radius: 8px;
-        }
-        button {
-            width: 100%;
-            padding: 10px;
-            background-color: #2DD4BF;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-        }
-        button:hover {
-            opacity: 0.8;
-        }
-    </style>
+    <link href="./libs/tw-output.css" rel="stylesheet">
 </head>
-<body>
-    <h1>Scramble</h1>
-    <div id="status">Checking status...</div>
-    <button id="optionsButton">Open Options</button>
+<body class="font-sans antialiased w-[300px] p-4 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+    <h1 class="text-lg font-bold mb-3">Scramble</h1>
+    <div id="status" class="mb-3 p-3 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm">Checking status...</div>
+    <button id="optionsButton" class="w-full py-2.5 bg-teal-500 text-white rounded-lg hover:bg-teal-600 transition-colors font-medium">Open Options</button>
     <script src="popup.js"></script>
 </body>
 </html>

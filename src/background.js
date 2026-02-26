@@ -77,6 +77,7 @@ browserAPI.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'enhanceText') {
     enhanceTextWithRateLimit(request.promptId, request.selectedText)
       .then(enhancedText => {
+        saveHistoryEntry(request.promptId, request.selectedText, enhancedText);
         sendResponse({ success: true, enhancedText });
       })
       .catch(error => {
@@ -85,8 +86,71 @@ browserAPI.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     return true;
   }
+
+  if (request.action === 'insertTextViaDebugger') {
+    const tabId = sender.tab?.id;
+    if (!tabId) {
+      sendResponse({ success: false, error: 'No tab ID' });
+      return false;
+    }
+    insertTextViaDebugger(tabId, request.text)
+      .then(() => sendResponse({ success: true }))
+      .catch(err => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
   return false;
 });
+
+// Uses Chrome DevTools Protocol to insert text at OS level — bypasses all
+// JavaScript event filtering including isTrusted checks in React-based editors.
+// Only available in Chrome (chrome.debugger is undefined in Firefox).
+function insertTextViaDebugger(tabId, text) {
+  if (typeof chrome === 'undefined' || !chrome.debugger) {
+    return Promise.reject(new Error('chrome.debugger not available'));
+  }
+  return new Promise((resolve, reject) => {
+    chrome.debugger.attach({ tabId }, '1.3', () => {
+      if (chrome.runtime.lastError) {
+        return reject(new Error(chrome.runtime.lastError.message));
+      }
+      chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text }, () => {
+        const cmdError = chrome.runtime.lastError;
+        chrome.debugger.detach({ tabId }, () => {
+          if (cmdError) reject(new Error(cmdError.message));
+          else resolve();
+        });
+      });
+    });
+  });
+}
+
+async function saveHistoryEntry(promptId, original, enhanced) {
+  try {
+    const config = await getConfig();
+    const allPrompts = [...DEFAULT_PROMPTS, ...(config.customPrompts || [])];
+    const promptTitle = allPrompts.find(p => p.id === promptId)?.title || promptId;
+
+    const { history = [] } = await browserAPI.storage.local.get('history');
+    history.push({
+      id: Date.now().toString(),
+      timestamp: Date.now(),
+      promptId,
+      promptTitle,
+      original,
+      enhanced
+    });
+
+    // Keep last 500 entries to prevent unbounded growth
+    if (history.length > 500) {
+      history.splice(0, history.length - 500);
+    }
+
+    await browserAPI.storage.local.set({ history });
+  } catch (error) {
+    console.error('Error saving history entry:', error);
+  }
+}
 
 async function enhanceTextWithLLM(promptId, text) {
   const config = await getConfig();

@@ -1,9 +1,28 @@
 const browserAPI = (typeof browser !== 'undefined' ? browser : chrome);
 
+function initDarkMode() {
+    browserAPI.storage.sync.get({ darkMode: 'system' }, ({ darkMode }) => {
+        const html = document.documentElement;
+        if (darkMode === 'dark') {
+            html.classList.add('dark');
+        } else if (darkMode === 'light') {
+            html.classList.remove('dark');
+        } else {
+            if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                html.classList.add('dark');
+            } else {
+                html.classList.remove('dark');
+            }
+        }
+    });
+}
+
 document.addEventListener('DOMContentLoaded', async function() {
+    initDarkMode();
+
     const statusElement = document.getElementById('status');
     const optionsButton = document.getElementById('optionsButton');
-  
+
     try {
         // Use async/await and proper error handling
         const result = await new Promise((resolve) => {
@@ -15,15 +34,15 @@ document.addEventListener('DOMContentLoaded', async function() {
 
         if (result.apiKey) {
             statusElement.textContent = `Extension is ready to use with ${result.llmProvider} provider.`;
-            statusElement.style.color = '#4CAF50'; // Success color
+            statusElement.className = 'mb-3 p-3 bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 rounded-lg text-sm';
         } else {
             statusElement.textContent = 'API key not set. Please set it in the options.';
-            statusElement.style.color = '#f44336'; // Error color
+            statusElement.className = 'mb-3 p-3 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 rounded-lg text-sm';
         }
     } catch (error) {
         console.error('Error checking storage:', error);
         statusElement.textContent = 'Error checking extension status.';
-        statusElement.style.color = '#f44336';
+        statusElement.className = 'mb-3 p-3 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 rounded-lg text-sm';
     }
 
     // Open options page when button is clicked

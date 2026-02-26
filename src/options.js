@@ -1,6 +1,258 @@
 const browserAPI = (typeof browser !== 'undefined' ? browser : chrome);
 
-// Saves options to browserAPI.storage
+// --- Dark Mode ---
+
+function initDarkMode() {
+  browserAPI.storage.sync.get({ darkMode: 'system' }, ({ darkMode }) => {
+    applyDarkMode(darkMode);
+    updateDarkModeIcon(darkMode);
+  });
+}
+
+function applyDarkMode(mode) {
+  const html = document.documentElement;
+  if (mode === 'dark') {
+    html.classList.add('dark');
+  } else if (mode === 'light') {
+    html.classList.remove('dark');
+  } else {
+    // system
+    if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      html.classList.add('dark');
+    } else {
+      html.classList.remove('dark');
+    }
+  }
+}
+
+function updateDarkModeIcon(mode) {
+  const icon = document.getElementById('darkModeIcon');
+  if (!icon) return;
+  if (mode === 'dark') icon.textContent = '🌙';
+  else if (mode === 'light') icon.textContent = '☀️';
+  else icon.textContent = '💻';
+}
+
+function cycleDarkMode() {
+  browserAPI.storage.sync.get({ darkMode: 'system' }, ({ darkMode }) => {
+    const next = darkMode === 'system' ? 'light' : darkMode === 'light' ? 'dark' : 'system';
+    browserAPI.storage.sync.set({ darkMode: next });
+    applyDarkMode(next);
+    updateDarkModeIcon(next);
+  });
+}
+
+// Listen for system theme changes
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  browserAPI.storage.sync.get({ darkMode: 'system' }, ({ darkMode }) => {
+    if (darkMode === 'system') applyDarkMode('system');
+  });
+});
+
+// --- Tab Switching ---
+
+function initTabs() {
+  const tabButtons = document.querySelectorAll('.tab-btn');
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+}
+
+function switchTab(tabName) {
+  // Toggle content
+  document.getElementById('tab-settings').classList.toggle('hidden', tabName !== 'settings');
+  document.getElementById('tab-history').classList.toggle('hidden', tabName !== 'history');
+
+  // Toggle button styles
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    const isActive = btn.dataset.tab === tabName;
+    btn.classList.toggle('border-teal-500', isActive);
+    btn.classList.toggle('text-teal-600', isActive);
+    btn.classList.toggle('dark:text-teal-400', isActive);
+    btn.classList.toggle('border-transparent', !isActive);
+    btn.classList.toggle('text-gray-500', !isActive);
+    btn.classList.toggle('dark:text-gray-400', !isActive);
+  });
+
+  if (tabName === 'history') loadHistory();
+}
+
+// --- History ---
+
+function formatRelativeTime(timestamp) {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
+
+function loadHistory() {
+  browserAPI.storage.local.get({ history: [] }, ({ history }) => {
+    const container = document.getElementById('history-container');
+    const emptyState = document.getElementById('history-empty');
+
+    // Clear previous entries (keep empty state element)
+    container.querySelectorAll('.history-entry').forEach(el => el.remove());
+
+    if (!history.length) {
+      emptyState.classList.remove('hidden');
+      return;
+    }
+    emptyState.classList.add('hidden');
+
+    // Render in reverse chronological order
+    const entries = [...history].reverse();
+    for (const entry of entries) {
+      const card = document.createElement('div');
+      card.className = 'history-entry rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden';
+
+      const { oldTokens, oldChanged, newTokens, newChanged } = computeWordDiff(entry.original, entry.enhanced);
+      const oldHtml = renderTokens(oldTokens, oldChanged, 'diff-del');
+      const newHtml = renderTokens(newTokens, newChanged, 'diff-add');
+
+      card.innerHTML = `
+        <div class="flex items-center justify-between px-4 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${escapeHtml(entry.promptTitle)}</span>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-gray-500 dark:text-gray-400">${formatRelativeTime(entry.timestamp)}</span>
+            <button class="delete-entry text-xs text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors px-1" data-id="${escapeHtml(entry.id)}" title="Delete entry">✕</button>
+          </div>
+        </div>
+        <div class="px-4 py-2 bg-red-50 dark:bg-red-950/30 border-b border-gray-200 dark:border-gray-700">
+          <span class="text-red-700 dark:text-red-400 font-mono text-sm select-all"><span class="select-none text-red-400 dark:text-red-600 mr-2">−</span>${oldHtml}</span>
+        </div>
+        <div class="px-4 py-2 bg-green-50 dark:bg-green-950/30">
+          <span class="text-green-700 dark:text-green-400 font-mono text-sm select-all"><span class="select-none text-green-400 dark:text-green-600 mr-2">+</span>${newHtml}</span>
+        </div>
+      `;
+
+      card.querySelector('.delete-entry').addEventListener('click', () => {
+        deleteHistoryEntry(entry.id, card);
+      });
+
+      container.appendChild(card);
+    }
+  });
+}
+
+function deleteHistoryEntry(id, cardElement) {
+  browserAPI.storage.local.get({ history: [] }, ({ history }) => {
+    const updated = history.filter(e => e.id !== id);
+    browserAPI.storage.local.set({ history: updated }, () => {
+      cardElement.remove();
+      if (!document.querySelector('.history-entry')) {
+        document.getElementById('history-empty').classList.remove('hidden');
+      }
+    });
+  });
+}
+
+function clearHistory() {
+  if (!confirm('Are you sure you want to clear all enhancement history?')) return;
+  browserAPI.storage.local.set({ history: [] }, () => {
+    loadHistory();
+  });
+}
+
+function exportHistory(format) {
+  browserAPI.storage.local.get({ history: [] }, ({ history }) => {
+    if (!history.length) {
+      alert('No history to export.');
+      return;
+    }
+
+    let content, mimeType, filename;
+
+    if (format === 'json') {
+      content = JSON.stringify(history, null, 2);
+      mimeType = 'application/json';
+      filename = 'scramble-history.json';
+    } else {
+      const rows = [['id', 'timestamp', 'date', 'promptId', 'promptTitle', 'original', 'enhanced']];
+      for (const e of history) {
+        rows.push([
+          e.id,
+          e.timestamp,
+          new Date(e.timestamp).toISOString(),
+          e.promptId,
+          e.promptTitle,
+          e.original,
+          e.enhanced,
+        ].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`));
+      }
+      content = rows.map(r => r.join(',')).join('\r\n');
+      mimeType = 'text/csv';
+      filename = 'scramble-history.csv';
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function tokenize(text) {
+  return text.match(/\S+|\s+/g) || [];
+}
+
+function computeWordDiff(oldText, newText) {
+  const oldTokens = tokenize(oldText);
+  const newTokens = tokenize(newText);
+  const m = oldTokens.length, n = newTokens.length;
+
+  const dp = Array.from({ length: m + 1 }, () => new Uint32Array(n + 1));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = oldTokens[i - 1] === newTokens[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+
+  const oldChanged = new Array(m).fill(true);
+  const newChanged = new Array(n).fill(true);
+  let i = m, j = n;
+  while (i > 0 && j > 0) {
+    if (oldTokens[i - 1] === newTokens[j - 1]) {
+      oldChanged[i - 1] = false;
+      newChanged[j - 1] = false;
+      i--; j--;
+    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+      i--;
+    } else {
+      j--;
+    }
+  }
+
+  return { oldTokens, oldChanged, newTokens, newChanged };
+}
+
+function renderTokens(tokens, changed, cls) {
+  return tokens.map((token, i) => {
+    const esc = escapeHtml(token);
+    return (changed[i] && token.trim())
+      ? `<mark class="${cls}">${esc}</mark>`
+      : esc;
+  }).join('');
+}
+
+// --- Saves options to browserAPI.storage ---
+
 async function saveOptions() {
   try {
     const options = {
@@ -9,7 +261,8 @@ async function saveOptions() {
       llmModel: document.getElementById('llmModel').value,
       customEndpoint: document.getElementById('customEndpoint').value,
       customPrompts: getCustomPrompts(),
-      showSuccessNotification: document.getElementById('showSuccessNotification').checked
+      showSuccessNotification: document.getElementById('showSuccessNotification').checked,
+      outputMode: document.querySelector('input[name="outputMode"]:checked')?.value || 'replace',
     };
 
     await new Promise((resolve, reject) => {
@@ -73,9 +326,9 @@ function recordShortcut(container) {
   const display = container.querySelector('.shortcut-display');
   const recordBtn = container.querySelector('.record-shortcut');
   display.value = 'Press a key combo...';
-  display.style.borderColor = '#6366f1';
+  display.style.borderColor = '#2DD4BF';
   recordBtn.textContent = 'Recording...';
-  recordBtn.classList.replace('bg-indigo-600', 'bg-yellow-500');
+  recordBtn.classList.replace('bg-teal-500', 'bg-yellow-500');
 
   function onKeyDown(e) {
     e.preventDefault();
@@ -94,7 +347,7 @@ function recordShortcut(container) {
     display.value = formatShortcut(shortcut);
     display.style.borderColor = '';
     recordBtn.textContent = 'Record';
-    recordBtn.classList.replace('bg-yellow-500', 'bg-indigo-600');
+    recordBtn.classList.replace('bg-yellow-500', 'bg-teal-500');
     document.removeEventListener('keydown', onKeyDown, true);
   }
 
@@ -113,7 +366,8 @@ async function restoreOptions() {
       llmModel: 'gpt-3.5-turbo',
       customEndpoint: '',
       customPrompts: [],
-      showSuccessNotification: true
+      showSuccessNotification: true,
+      outputMode: 'replace',
     };
 
     const items = await new Promise(resolve => {
@@ -136,6 +390,10 @@ async function restoreOptions() {
     if (notifCheckbox) {
       notifCheckbox.checked = items.showSuccessNotification !== false;
     }
+
+    // Restore output mode
+    const outputModeEl = document.querySelector(`input[name="outputMode"][value="${items.outputMode || 'replace'}"]`);
+    if (outputModeEl) outputModeEl.checked = true;
 
     // Clear existing prompts before restoring
     const promptsContainer = document.getElementById('prompts-container');
@@ -161,7 +419,7 @@ function updateUIForProvider(provider) {
     const apiKeySpan = Array.from(labels).find(span => span.textContent.includes('API Key'));
     const modelSpan = Array.from(labels).find(span => span.textContent.includes('Model'));
     const endpointSpan = Array.from(labels).find(span => span.textContent.includes('Endpoint'));
-    
+
     const apiKeyInput = document.getElementById('apiKey');
     const apiKeyHelp = document.getElementById('apiKeyHelp');
     const llmModelInput = document.getElementById('llmModel');
@@ -278,41 +536,41 @@ async function fetchAvailableModels() {
 
   try {
     let endpoint, headers = {};
-    
+
     switch (provider) {
       case 'openai':
         endpoint = customEndpoint ? customEndpoint.replace('/chat/completions', '/models') : 'https://api.openai.com/v1/models';
         if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
         break;
-        
+
       case 'lmstudio':
         const baseUrl = customEndpoint ? customEndpoint.split('/v1')[0] : 'http://localhost:1234';
         endpoint = `${baseUrl}/v1/models`;
         if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
         break;
-        
+
       case 'ollama':
         const ollamaBaseUrl = customEndpoint ? customEndpoint.split('/api')[0] : 'http://localhost:11434';
         endpoint = `${ollamaBaseUrl}/api/tags`;
         if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
         break;
-        
+
       case 'openrouter':
         endpoint = 'https://openrouter.ai/api/v1/models';
         if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
         break;
-        
+
       case 'groq':
         endpoint = customEndpoint ? customEndpoint.replace('/chat/completions', '/models') : 'https://api.groq.com/openai/v1/models';
         if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
         break;
-        
+
       default:
         throw new Error(`Model fetching not supported for ${provider}`);
     }
 
     const response = await fetch(endpoint, { headers });
-    
+
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
@@ -447,6 +705,8 @@ function showSuccessMessage(message) {
 // Initialize event listeners
 document.addEventListener('DOMContentLoaded', () => {
   console.log('DOMContentLoaded event fired');
+  initDarkMode();
+  initTabs();
   restoreOptions();
 
   const saveButton = document.getElementById('save');
@@ -454,6 +714,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const addPromptButton = document.getElementById('add-prompt');
   const fetchModelsButton = document.getElementById('fetchModels');
   const availableModelsSelect = document.getElementById('availableModels');
+  const darkModeToggle = document.getElementById('darkModeToggle');
+  const clearHistoryButton = document.getElementById('clearHistory');
 
   if (saveButton) {
     saveButton.addEventListener('click', saveOptions);
@@ -477,6 +739,24 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('llmModel').value = e.target.value;
       }
     });
+  }
+
+  if (darkModeToggle) {
+    darkModeToggle.addEventListener('click', cycleDarkMode);
+  }
+
+  if (clearHistoryButton) {
+    clearHistoryButton.addEventListener('click', clearHistory);
+  }
+
+  const exportJsonButton = document.getElementById('exportHistoryJson');
+  if (exportJsonButton) {
+    exportJsonButton.addEventListener('click', () => exportHistory('json'));
+  }
+
+  const exportCsvButton = document.getElementById('exportHistoryCsv');
+  if (exportCsvButton) {
+    exportCsvButton.addEventListener('click', () => exportHistory('csv'));
   }
 });
 
